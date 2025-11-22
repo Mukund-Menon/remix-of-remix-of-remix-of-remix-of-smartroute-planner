@@ -404,10 +404,14 @@ export default function HoverReceiver() {
   const [focusBox, setFocusBox] = useState<Box>(null);
   const [focusedElementId, setFocusedElementId] = useState<string | null>(null);
   const [isVisualEditMode, setIsVisualEditMode] = useState(() => {
-    // Initialize from localStorage if available
+    // Initialize from localStorage if available - only in browser
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem(VISUAL_EDIT_MODE_KEY);
-      return stored === "true";
+      try {
+        const stored = localStorage.getItem(VISUAL_EDIT_MODE_KEY);
+        return stored === "true";
+      } catch {
+        return false;
+      }
     }
     return false;
   });
@@ -1024,11 +1028,11 @@ export default function HoverReceiver() {
           parentRect.height - parentPaddingTop - parentPaddingBottom;
 
         /*
-         * Soft-clamp strategy: we respect the parent’s max size until the
-         * user’s cursor actually travels beyond that limit.  As soon as the
+         * Soft-clamp strategy: we respect the parent's max size until the
+         * user's cursor actually travels beyond that limit.  As soon as the
          * drag distance would produce a dimension larger than the container
          * can accommodate we stop clamping and let the element follow the
-         * cursor, effectively allowing it to “spill” out of its parent.
+         * cursor, effectively allowing it to "spill" out of its parent.
          */
         const exceedsWidth = newWidth > maxWidth;
         const exceedsHeight = newHeight > maxHeight;
