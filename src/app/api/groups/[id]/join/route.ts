@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { groups, groupMembers } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { auth } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
-    // Extract and validate session
-    const session = await auth.api.getSession({ headers: request.headers });
-    
-    if (!session?.user) {
+    const body = await request.json();
+    const { memberName, memberEmail } = body;
+
+    // Validate memberName
+    if (!memberName || typeof memberName !== 'string' || memberName.trim() === '') {
       return NextResponse.json(
-        { error: 'Authentication required', code: 'UNAUTHORIZED' },
-        { status: 401 }
+        { error: 'Member name is required', code: 'INVALID_NAME' },
+        { status: 400 }
       );
     }
 
@@ -43,31 +43,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if user is already a member
-    const existingMembership = await db
-      .select()
-      .from(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, groupId),
-          eq(groupMembers.userId, session.user.id)
-        )
-      )
-      .limit(1);
-
-    if (existingMembership.length > 0) {
-      return NextResponse.json(
-        { error: 'Already a member of this group', code: 'ALREADY_MEMBER' },
-        { status: 400 }
-      );
-    }
-
-    // Add user to group
+    // Add member to group
     const newMembership = await db
       .insert(groupMembers)
       .values({
         groupId: groupId,
-        userId: session.user.id,
+        memberName: memberName.trim(),
+        memberEmail: memberEmail?.trim() || null,
         role: 'member',
         joinedAt: new Date().toISOString(),
       })

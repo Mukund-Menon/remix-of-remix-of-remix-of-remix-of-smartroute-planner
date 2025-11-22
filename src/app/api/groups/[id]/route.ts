@@ -1,21 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { groups, groupMembers, user, trips } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
-import { auth } from '@/lib/auth';
+import { groups, groupMembers, trips } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 
 export async function GET(request: NextRequest) {
   try {
-    // Extract session using better-auth
-    const session = await auth.api.getSession({ headers: request.headers });
-    
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Authentication required', code: 'UNAUTHENTICATED' },
-        { status: 401 }
-      );
-    }
-
     // Extract group id from URL path
     const id = request.nextUrl.pathname.split('/').slice(-1)[0];
 
@@ -44,49 +33,10 @@ export async function GET(request: NextRequest) {
 
     const group = groupResult[0];
 
-    // Check if user is a member of this group
-    const membershipCheck = await db.select()
+    // Query all group members
+    const members = await db.select()
       .from(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, groupId),
-          eq(groupMembers.userId, session.user.id)
-        )
-      )
-      .limit(1);
-
-    if (membershipCheck.length === 0) {
-      return NextResponse.json(
-        { error: 'Access denied. You are not a member of this group', code: 'NOT_A_MEMBER' },
-        { status: 403 }
-      );
-    }
-
-    // Query all group members with user details
-    const membersWithDetails = await db.select({
-      id: groupMembers.id,
-      groupId: groupMembers.groupId,
-      userId: groupMembers.userId,
-      role: groupMembers.role,
-      joinedAt: groupMembers.joinedAt,
-      userName: user.name,
-      userEmail: user.email,
-      userImage: user.image,
-    })
-      .from(groupMembers)
-      .innerJoin(user, eq(groupMembers.userId, user.id))
       .where(eq(groupMembers.groupId, groupId));
-
-    // Format members array
-    const members = membersWithDetails.map(member => ({
-      id: member.id,
-      userId: member.userId,
-      role: member.role,
-      joinedAt: member.joinedAt,
-      name: member.userName,
-      email: member.userEmail,
-      image: member.userImage,
-    }));
 
     // Query trip details if tripId exists
     let tripDetails = null;
@@ -103,13 +53,7 @@ export async function GET(request: NextRequest) {
 
     // Return group object with members and trip details
     return NextResponse.json({
-      id: group.id,
-      name: group.name,
-      tripId: group.tripId,
-      createdBy: group.createdBy,
-      status: group.status,
-      createdAt: group.createdAt,
-      updatedAt: group.updatedAt,
+      ...group,
       members,
       memberCount: members.length,
       trip: tripDetails,

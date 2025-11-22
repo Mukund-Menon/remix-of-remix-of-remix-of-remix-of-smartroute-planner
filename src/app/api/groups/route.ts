@@ -1,21 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { groups, groupMembers, user } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
-import { auth } from '@/lib/auth';
+import { groups, groupMembers } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 
 export async function POST(request: NextRequest) {
   try {
-    // Get session using better-auth
-    const session = await auth.api.getSession({ headers: request.headers });
-    
-    if (!session?.user) {
-      return NextResponse.json({ 
-        error: 'Authentication required',
-        code: 'UNAUTHENTICATED' 
-      }, { status: 401 });
-    }
-
     const body = await request.json();
     const { name, tripId } = body;
 
@@ -40,12 +29,11 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString();
 
-    // Create the group
+    // Create the group - NO createdBy needed
     const newGroup = await db.insert(groups)
       .values({
         name: name.trim(),
         tripId: tripId ? parseInt(tripId) : null,
-        createdBy: session.user.id,
         status: 'active',
         createdAt: now,
         updatedAt: now,
@@ -59,15 +47,6 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // Add creator as admin member
-    await db.insert(groupMembers)
-      .values({
-        groupId: newGroup[0].id,
-        userId: session.user.id,
-        role: 'admin',
-        joinedAt: now,
-      });
-
     return NextResponse.json(newGroup[0], { status: 201 });
 
   } catch (error) {
@@ -80,82 +59,21 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    // Get session using better-auth
-    const session = await auth.api.getSession({ headers: request.headers });
-    
-    if (!session?.user) {
-      return NextResponse.json({ 
-        error: 'Authentication required',
-        code: 'UNAUTHENTICATED' 
-      }, { status: 401 });
-    }
-
-    // Get all groups where the user is a member
-    const userGroupMemberships = await db.select()
-      .from(groupMembers)
-      .where(eq(groupMembers.userId, session.user.id));
-
-    const groupIds = userGroupMemberships.map(gm => gm.groupId);
-
-    if (groupIds.length === 0) {
-      return NextResponse.json([]);
-    }
-
-    // Get all groups the user belongs to
-    const userGroups = await db.select()
-      .from(groups)
-      .where(eq(groups.id, groupIds[0]));
-
-    // For multiple group IDs, we need to fetch each separately and combine
-    const allGroups = [];
-    for (const groupId of groupIds) {
-      const groupResult = await db.select()
-        .from(groups)
-        .where(eq(groups.id, groupId))
-        .limit(1);
-      
-      if (groupResult.length > 0) {
-        allGroups.push(groupResult[0]);
-      }
-    }
+    // Get all groups
+    const allGroups = await db.select().from(groups);
 
     // Enrich each group with member information
     const enrichedGroups = await Promise.all(
       allGroups.map(async (group) => {
         // Get all members for this group
-        const members = await db.select({
-          id: groupMembers.id,
-          groupId: groupMembers.groupId,
-          userId: groupMembers.userId,
-          role: groupMembers.role,
-          joinedAt: groupMembers.joinedAt,
-          userName: user.name,
-          userEmail: user.email,
-          userImage: user.image,
-        })
+        const members = await db.select()
         .from(groupMembers)
-        .leftJoin(user, eq(groupMembers.userId, user.id))
         .where(eq(groupMembers.groupId, group.id));
-
-        // Format members data
-        const formattedMembers = members.map(m => ({
-          id: m.id,
-          groupId: m.groupId,
-          userId: m.userId,
-          role: m.role,
-          joinedAt: m.joinedAt,
-          user: {
-            id: m.userId,
-            name: m.userName,
-            email: m.userEmail,
-            image: m.userImage,
-          }
-        }));
 
         return {
           ...group,
           memberCount: members.length,
-          members: formattedMembers,
+          members: members,
         };
       })
     );

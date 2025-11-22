@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { trips, tripMatches } from '@/db/schema';
 import { eq, and, like, sql, desc, ne } from 'drizzle-orm';
-import { auth } from '@/lib/auth';
 
 // Geocoding function using Nominatim (OpenStreetMap)
 async function geocode(location: string): Promise<[number, number] | null> {
@@ -286,24 +285,7 @@ function calculateMatchScore(
 
 export async function POST(request: NextRequest) {
   try {
-    // Authentication check
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session || !session.user) {
-      return NextResponse.json({ 
-        error: 'Authentication required',
-        code: 'AUTHENTICATION_REQUIRED' 
-      }, { status: 401 });
-    }
-
     const requestBody = await request.json();
-
-    // Security check: reject if userId provided in body
-    if ('userId' in requestBody || 'user_id' in requestBody) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
 
     const { 
       source, 
@@ -362,11 +344,10 @@ export async function POST(request: NextRequest) {
       routeGeometry = route.coordinates;
     }
 
-    // Create trip
+    // Create trip - NO userId needed
     const timestamp = new Date().toISOString();
     const newTrip = await db.insert(trips)
       .values({
-        userId: session.user.id,
         source: sanitizedData.source,
         destination: sanitizedData.destination,
         sourceCoordinates: sourceCoords ? `${sourceCoords[0]},${sourceCoords[1]}` : null,
@@ -395,15 +376,10 @@ export async function POST(request: NextRequest) {
 
     // Run enhanced matching algorithm for carpooling
     try {
-      // Find all active trips from other users
+      // Find all active trips
       const potentialMatches = await db.select()
         .from(trips)
-        .where(
-          and(
-            eq(trips.status, 'active'),
-            ne(trips.userId, session.user.id)
-          )
-        );
+        .where(eq(trips.status, 'active'));
 
       // Calculate match scores using enhanced algorithm with configurable matchRadius
       const matchInserts = [];
@@ -506,38 +482,22 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    // Authentication check
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session || !session.user) {
-      return NextResponse.json({ 
-        error: 'Authentication required',
-        code: 'AUTHENTICATION_REQUIRED' 
-      }, { status: 401 });
-    }
-
     const searchParams = request.nextUrl.searchParams;
     const statusFilter = searchParams.get('status');
 
-    // Build query with userId filter
+    // Build query - NO userId filter needed
     let query = db.select().from(trips);
 
     if (statusFilter) {
-      query = query.where(
-        and(
-          eq(trips.userId, session.user.id),
-          eq(trips.status, statusFilter)
-        )
-      );
-    } else {
-      query = query.where(eq(trips.userId, session.user.id));
+      query = query.where(eq(trips.status, statusFilter));
     }
 
     // Order by createdAt DESC
-    const userTrips = await query.orderBy(desc(trips.createdAt));
+    const allTrips = await query.orderBy(desc(trips.createdAt));
 
     // Add match count to each trip
     const tripsWithMatchCount = await Promise.all(
-      userTrips.map(async (trip) => {
+      allTrips.map(async (trip) => {
         const matchCountResult = await db.select({ 
           count: sql<number>`cast(count(*) as integer)` 
         })

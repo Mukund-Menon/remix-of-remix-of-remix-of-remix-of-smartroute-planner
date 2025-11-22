@@ -2,19 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { messages } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { auth } from '@/lib/auth';
 
 export async function DELETE(request: NextRequest) {
   try {
-    // Authenticate user
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Authentication required', code: 'UNAUTHORIZED' },
-        { status: 401 }
-      );
-    }
-
     // Extract group ID and message ID from URL path
     const pathParts = request.nextUrl.pathname.split('/');
     const groupIdParam = pathParts[3];
@@ -67,18 +57,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Verify the message was sent by the authenticated user
-    if (message.userId !== session.user.id) {
-      return NextResponse.json(
-        { 
-          error: 'Only the sender can delete this message', 
-          code: 'NOT_MESSAGE_SENDER' 
-        },
-        { status: 403 }
-      );
-    }
-
-    // Delete the message
+    // Delete the message (no auth check needed)
     const deleted = await db
       .delete(messages)
       .where(eq(messages.id, messageId))
@@ -95,13 +74,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json(
       {
         message: 'Message deleted successfully',
-        deletedMessage: {
-          id: deleted[0].id,
-          groupId: deleted[0].groupId,
-          userId: deleted[0].userId,
-          message: deleted[0].message,
-          createdAt: deleted[0].createdAt,
-        },
+        deletedMessage: deleted[0],
       },
       { status: 200 }
     );

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { groups, groupMembers, trips } from '@/db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
-import { auth } from '@/lib/auth';
 
 // Calculate optimal combined route for all group members
 async function calculateCombinedRoute(memberTrips: any[]) {
@@ -114,17 +113,6 @@ function mapToOSRMProfile(mode: string): string {
 
 export async function GET(request: NextRequest) {
   try {
-    // Authentication check
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Authentication required', code: 'AUTHENTICATION_REQUIRED' },
-        { status: 401 }
-      );
-    }
-
-    const userId = session.user.id;
-
     // Extract group ID from URL path
     const pathParts = request.nextUrl.pathname.split('/');
     const groupIdParam = pathParts[3];
@@ -139,47 +127,28 @@ export async function GET(request: NextRequest) {
 
     const groupId = parseInt(groupIdParam);
 
-    // Verify user is a member of the group
-    const membership = await db
-      .select()
-      .from(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, groupId),
-          eq(groupMembers.userId, userId)
-        )
-      )
-      .limit(1);
-
-    if (membership.length === 0) {
-      return NextResponse.json(
-        { error: 'You are not a member of this group', code: 'FORBIDDEN' },
-        { status: 403 }
-      );
-    }
-
     // Get all members of the group
     const members = await db
       .select()
       .from(groupMembers)
       .where(eq(groupMembers.groupId, groupId));
 
-    const memberUserIds = members.map(m => m.userId);
+    if (members.length === 0) {
+      return NextResponse.json(
+        { error: 'No members found in this group', code: 'NO_MEMBERS' },
+        { status: 404 }
+      );
+    }
 
-    // Get all trips from group members
+    // Get all trips from group - since we removed userId, get all active trips
     const memberTrips = await db
       .select()
       .from(trips)
-      .where(
-        and(
-          inArray(trips.userId, memberUserIds),
-          eq(trips.status, 'active')
-        )
-      );
+      .where(eq(trips.status, 'active'));
 
     if (memberTrips.length === 0) {
       return NextResponse.json(
-        { error: 'No active trips found for group members', code: 'NO_TRIPS' },
+        { error: 'No active trips found', code: 'NO_TRIPS' },
         { status: 404 }
       );
     }
@@ -199,7 +168,6 @@ export async function GET(request: NextRequest) {
       memberCount: memberTrips.length,
       trips: memberTrips.map(t => ({
         id: t.id,
-        userId: t.userId,
         source: t.source,
         destination: t.destination,
         travelDate: t.travelDate,
